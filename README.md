@@ -172,14 +172,11 @@ We achieved this with only 1/10 data and model resources compared with Qwen-Math
 If you find PRIME or ImplicitPRM helpful, please cite us.
 
 ```bibtex
-@misc{cui2025processreinforcementimplicitrewards,
-      title={Process Reinforcement through Implicit Rewards}, 
-      author={Ganqu Cui and Lifan Yuan and Zefan Wang and Hanbin Wang and Wendi Li and Bingxiang He and Yuchen Fan and Tianyu Yu and Qixin Xu and Weize Chen and Jiarui Yuan and Huayu Chen and Kaiyan Zhang and Xingtai Lv and Shuo Wang and Yuan Yao and Xu Han and Hao Peng and Yu Cheng and Zhiyuan Liu and Maosong Sun and Bowen Zhou and Ning Ding},
-      year={2025},
-      eprint={2502.01456},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2502.01456}, 
+@article{cui2025process,
+  title={Process reinforcement through implicit rewards},
+  author={Cui, Ganqu and Yuan, Lifan and Wang, Zefan and Wang, Hanbin and Li, Wendi and He, Bingxiang and Fan, Yuchen and Yu, Tianyu and Xu, Qixin and Chen, Weize and others},
+  journal={arXiv preprint arXiv:2502.01456},
+  year={2025}
 }
 ```
 
