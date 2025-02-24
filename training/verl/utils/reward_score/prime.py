@@ -4,59 +4,58 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from typing import Optional
-
+import os
 import math
 
-from .evaluation_utils.code_util import evaluate_code
-from .evaluation_utils.math_util import evaluate_math
+# from .evaluation_utils.code_util import evaluate_code
+# from .evaluation_utils.math_util import evaluate_math
 from tqdm.asyncio import tqdm
+from .evaluation_utils.schema_util import evaluate_schema
 
-def process_completion(completion, task, reference):
-    if task == "code":
-        return evaluate_code(completion, reference)
-    elif task == "math":
-        return evaluate_math(completion, str(reference))
+from func_timeout import func_set_timeout
+
+OUR_TASKS = ["schema", "custom", "limitation", "translation", "tool_calling"]
+
+@func_set_timeout(10)
+def process_completion(completion, reference, task):
+    # if task == "code":
+        # return evaluate_code(completion, reference)
+    # elif task == "math":
+        # return evaluate_math(completion, str(reference))
+    if task in OUR_TASKS:
+        return evaluate_schema(completion, reference, task)
     else:
-        print('task')
-        raise NotImplementedError
+        raise NotImplementedError(f"Task {task} not implemented.")
 
-async def process_row_with_timeout(completion, reference, task, executor, timeout=300.0):
-    """
-    Process a single row with a timeout.
-    """
-    loop = asyncio.get_running_loop()
+    
+def process_row_with_timeout(completion, reference, task):
     try:
-        # Ensure process_completion is called properly
-        tasks = [asyncio.wait_for(
-            loop.run_in_executor(
-                executor,
-                partial(process_completion, completion, task, reference)  # Ensure synchronous
-            ),
-            timeout=timeout
-        )
-        ]
-        return await asyncio.gather(*tasks)
-    except asyncio.TimeoutError:
-        print(f"Timeout occurred for completion: {completion}")
-        return None  # Default value for timed-out rows
-    except Exception as e:
-        print(f"Error processing completion: {completion[:10]}, Error: {e}")
-        return None  # Default value for failed rows
+        return process_completion(completion, reference, task)
+    except:
+        traceback.print_exc()
+        return None
 
-async def parallel_evaluate_continual_async(completions, references, tasks, num_processes, task_timeout=300.0):
+
+def parallel_evaluate_continual(completions, references, tasks, num_processes, task_timeout=15.0):
     """
     Evaluate rows in parallel with a process pool and timeout handling.
     """
     scores = []
+    results = []
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
-        # Create tasks for all rows
-        tasks_async = [
-            process_row_with_timeout(completion, reference, task, executor, timeout=task_timeout)
-            for completion, reference, task in zip(completions, references, tasks)
-        ]
-        # Use tqdm for progress tracking
-        results = await tqdm.gather(*tasks_async, disable=True)
+        futures = [executor.submit(process_row_with_timeout, completion, reference, task) for completion, reference, task in zip(completions, references, tasks)]
+        
+        for future in futures:
+            try:
+                result = future.result(timeout=task_timeout)
+                results.append(result)
+            except TimeoutError as e:
+                future.cancel()
+                results.append(None)
+                print("Error: Verifying timeout")
+        executor.shutdown(wait=False)
 
+    print('Results:', results)
     # Process results
     for result, completion, reference, task in zip(results, completions, references, tasks):
         if isinstance(result, Exception) or result is None:
@@ -66,17 +65,20 @@ async def parallel_evaluate_continual_async(completions, references, tasks, num_
 
         try:
             # Process result based on task type
-            if task == 'code' and not result[0][0]: # if task is code, the reference should be json string
+            if task == 'code' and not result[0]: # if task is code, the reference should be json string
                 correct = 0
                 total = min(
                     len(json.loads(reference)['inputs'] if not isinstance(reference, dict) else reference['inputs']),
                     10)
-                for run in result[0][1]:
+                for run in result[1]:
                     if 'test_case' in run and 'res' in run['test_case'] and run['test_case']['res'] == '[True]':
                         correct += 1
                 scores.append(correct / total)
             else:
-                scores.append(float(int(result[0][0])))
+                if task in OUR_TASKS:
+                    scores.append(float(result))
+                else:
+                    scores.append(float(int(result[0])))
         except Exception as e:
             print(f"Error processing result for row: {completion[:10]}, Error: {e}")
             scores.append(0.0)
@@ -86,11 +88,4 @@ def compute_score(completions, references, tasks):
     # three lists should have identical length
     # TODO: make this one completely asynchronous, which means the main process can do other things(e.g., forwarding reward model) while computing score
     assert len(completions) == len(references) == len(tasks)
-    try:
-        return asyncio.run(parallel_evaluate_continual_async(completions, references, tasks, num_processes=64))
-    except asyncio.TimeoutError as e:
-        print('Global timeout in reward computing! Setting all as 0.5.')
-        return [0.5 for _ in range(len(completions))]
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        return [0.5 for _ in range(len(completions))]
+    return parallel_evaluate_continual(completions, references, tasks, num_processes=32)

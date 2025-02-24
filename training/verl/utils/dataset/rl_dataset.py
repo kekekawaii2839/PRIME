@@ -29,6 +29,34 @@ from verl.utils.fs import copy_local_path_from_hdfs
 from verl.utils.model import compute_position_id_with_mask
 import verl.utils.torch_functional as verl_F
 
+import ray
+from joblib import Parallel, delayed
+
+# Multi-processing setup for batch tokenization
+import multiprocessing
+from transformers import AutoTokenizer
+from functools import partial
+def init_process(tokenizer_name):
+    global process_tokenizer
+    process_tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+
+def process_chunk(max_prompt_length,chunk):
+    try:
+        length = []
+        for msg in  list(chunk):
+            tokenized = process_tokenizer.apply_chat_template(
+                list(map(dict,msg)),
+                add_generation_prompt=True,
+                return_tensors=None,
+                padding=False,
+                truncation=False
+            )
+            length.append(len(tokenized))
+        return length
+    except Exception as e:
+        print(f"Error processing chunk: {e}")
+        return [max_prompt_length + 1] * len(chunk)  # Exclude failed chunks
+
 
 def collate_fn(data_list: list[dict]) -> dict:
     tensors = {}
@@ -97,6 +125,27 @@ class RLHFDataset(Dataset):
         for i, parquet_file in enumerate(self.parquet_files):
             self.parquet_files[i] = copy_local_path_from_hdfs(src=parquet_file, cache_dir=self.cache_dir)
 
+    # def _read_files_and_tokenize(self):
+    #     dataframes = []
+    #     for parquet_file in self.parquet_files:
+    #         # read parquet files and cache
+    #         dataframe = pd.read_parquet(parquet_file)
+    #         dataframes.append(dataframe)
+    #     self.dataframe = pd.concat(dataframes)
+
+    #     print(f'original dataset len: {len(self.dataframe)}')
+
+    #     # filter out too long prompts
+    #     tokenizer = self.tokenizer
+    #     prompt_key = self.prompt_key
+    #     if self.system_prompt is not None:
+    #         self.dataframe[prompt_key] = self.dataframe[prompt_key].apply(lambda doc: doc[0].update({'content': self.system_prompt}) or doc)
+    #     self.dataframe = self.dataframe[self.dataframe.apply(lambda doc: len(
+    #         tokenizer.apply_chat_template(doc[prompt_key], add_generation_prompt=True)) <= self.max_prompt_length,
+    #                                                          axis=1)]
+
+    #     print(f'filter dataset len: {len(self.dataframe)}')
+
     def _read_files_and_tokenize(self):
         dataframes = []
         for parquet_file in self.parquet_files:
@@ -107,14 +156,30 @@ class RLHFDataset(Dataset):
 
         print(f'original dataset len: {len(self.dataframe)}')
 
-        # filter out too long prompts
-        tokenizer = self.tokenizer
         prompt_key = self.prompt_key
         if self.system_prompt is not None:
-            self.dataframe[prompt_key] = self.dataframe[prompt_key].apply(lambda doc: doc[0].update({'content': self.system_prompt}) or doc)
-        self.dataframe = self.dataframe[self.dataframe.apply(lambda doc: len(
-            tokenizer.apply_chat_template(doc[prompt_key], add_generation_prompt=True)) <= self.max_prompt_length,
-                                                             axis=1)]
+            self.dataframe[prompt_key] = self.dataframe[prompt_key].apply(
+                lambda doc: doc[0].update({'content': self.system_prompt}) or doc
+            )
+
+        # Extract all prompts for batch processing
+        prompts = self.dataframe[prompt_key].tolist()
+
+        tokenizer_name = self.tokenizer.name_or_path
+        n_processes = multiprocessing.cpu_count()
+        chunk_size = (len(prompts) + n_processes - 1) // n_processes
+        chunks = [prompts[i:i + chunk_size] for i in range(0, len(prompts), chunk_size)]
+
+        with multiprocessing.Pool(
+            processes=n_processes,
+            initializer=init_process,
+            initargs=(tokenizer_name,)
+        ) as pool:
+            chunk_lengths = pool.map(partial(process_chunk, self.max_prompt_length), chunks)
+
+        # Flatten lengths and apply filter
+        lengths = [length for sublist in chunk_lengths for length in sublist]
+        self.dataframe = self.dataframe[pd.Series(lengths) <= self.max_prompt_length]
 
         print(f'filter dataset len: {len(self.dataframe)}')
 
