@@ -76,7 +76,7 @@ def evaluate_tool(model_output: str, ground_truth: str) -> bool:
     return ground_truth_call == model_call
     
 
-def evaluate_schema(model_output: str, ground_truth: str, task: str) -> bool|float:
+def evaluate_schema(model_output: str, ground_truth: str, task: str, use_fine_grained: bool) -> bool|float:
     if task == "tool_calling":
         return evaluate_tool(model_output, ground_truth)
 
@@ -97,11 +97,11 @@ def evaluate_schema(model_output: str, ground_truth: str, task: str) -> bool|flo
         # find json, jsonc, json with comments
         json_str = re.findall(r"```json\n(.*?)\n```", model_output, re.DOTALL)
         if json_str:
-            if os.environ.get('FINE_GRAINED_SCHEMA', 'True') == 'True':
+            if use_fine_grained:
                 return fgevaluate_with_schema(json_str[0], ground_truth_schema)
             parsed_model_output = json5.loads(json_str[0])
         else:
-            if os.environ.get('FINE_GRAINED_SCHEMA', 'True') == 'True':
+            if use_fine_grained:
                 return fgevaluate_with_schema(model_output, ground_truth_schema)
             parsed_model_output = json5.loads(model_output)
         print('DEBUG in schema: success parsing model output using regex')

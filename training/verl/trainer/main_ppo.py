@@ -38,7 +38,7 @@ class RewardManager():
     """The reward manager.
     """
     # TODO: we are requiring a reward manager to be much more stronger than this. so this is fully refactored!
-    def __init__(self, tokenizer, num_examine,config) -> None:
+    def __init__(self, tokenizer, num_examine, config) -> None:
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
         self.config=config
@@ -49,12 +49,15 @@ class RewardManager():
         else:
             raise NotImplementedError
 
+        # schemabench
+        self.use_fine_grained = self.config.use_fine_grained
+
     def verify(self, data):
         response_ids = data.batch['responses']
         response_str = self.tokenizer.batch_decode(response_ids, skip_special_tokens=True)
         ground_truth = [data_item.non_tensor_batch['reward_model']['ground_truth'] for data_item in data]
         score = self.verifier_func(completions=response_str, references=ground_truth,
-                              tasks=data.non_tensor_batch['ability'])
+                              tasks=data.non_tensor_batch['ability'], use_fine_grained=self.use_fine_grained)
         data.batch['acc'] = torch.tensor(score, dtype=torch.float32, device=data.batch['responses'].device)
         reward_metrics = {}
         for ability in list(set(data.non_tensor_batch['ability'])):

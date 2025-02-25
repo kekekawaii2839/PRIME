@@ -17,33 +17,35 @@ from func_timeout import func_set_timeout
 OUR_TASKS = ["schema", "custom", "limitation", "translation", "tool_calling"]
 
 @func_set_timeout(10)
-def process_completion(completion, reference, task):
+def process_completion(completion, reference, task, use_fine_grained):
+    if isinstance(use_fine_grained, str):
+        use_fine_grained = use_fine_grained.lower() == "true"
     # if task == "code":
         # return evaluate_code(completion, reference)
     # elif task == "math":
         # return evaluate_math(completion, str(reference))
     if task in OUR_TASKS:
-        return evaluate_schema(completion, reference, task)
+        return evaluate_schema(completion, reference, task, use_fine_grained)
     else:
         raise NotImplementedError(f"Task {task} not implemented.")
 
     
-def process_row_with_timeout(completion, reference, task):
+def process_row_with_timeout(completion, reference, task, use_fine_grained):
     try:
-        return process_completion(completion, reference, task)
+        return process_completion(completion, reference, task, use_fine_grained)
     except:
         traceback.print_exc()
         return None
 
 
-def parallel_evaluate_continual(completions, references, tasks, num_processes, task_timeout=15.0):
+def parallel_evaluate_continual(completions, references, tasks, use_fine_grained, num_processes, task_timeout=15.0):
     """
     Evaluate rows in parallel with a process pool and timeout handling.
     """
     scores = []
     results = []
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
-        futures = [executor.submit(process_row_with_timeout, completion, reference, task) for completion, reference, task in zip(completions, references, tasks)]
+        futures = [executor.submit(process_row_with_timeout, completion, reference, task, use_fine_grained) for completion, reference, task in zip(completions, references, tasks)]
         
         for future in futures:
             try:
@@ -84,8 +86,8 @@ def parallel_evaluate_continual(completions, references, tasks, num_processes, t
             scores.append(0.0)
 
     return scores
-def compute_score(completions, references, tasks):
+def compute_score(completions, references, tasks, use_fine_grained):
     # three lists should have identical length
     # TODO: make this one completely asynchronous, which means the main process can do other things(e.g., forwarding reward model) while computing score
     assert len(completions) == len(references) == len(tasks)
-    return parallel_evaluate_continual(completions, references, tasks, num_processes=32)
+    return parallel_evaluate_continual(completions, references, tasks, use_fine_grained, num_processes=32)
